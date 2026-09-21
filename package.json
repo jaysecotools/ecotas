@@ -1,0 +1,13 @@
+{
+  "name": "ecotas",
+  "version": "0.2.0",
+  "description": "Local-first Tasmanian environmental management platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run.js",
+    "serve": "npx serve src"
+  },
+  "license": "UNLICENSED",
+  "engines": { "node": ">=18" }
+}
