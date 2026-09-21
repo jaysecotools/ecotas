@@ -117,6 +117,20 @@ The browser console should show only two EcoTas log lines:
 [<time>] [info] EcoTas v0.2.1 booting
 [<time>] [info] EcoTas ready
 ```
+### If a change to a source file does not take effect
+
+Browsers cache ES modules aggressively. After editing any file in `src/`,
+do a hard reload with caching disabled:
+
+1. Open DevTools (F12).
+2. Go to the **Network** tab.
+3. Tick **Disable cache**.
+4. Keep DevTools open and reload the page
+   (Ctrl+Shift+R on Windows, Cmd+Shift+R on macOS).
+
+If a change still does not appear, open the app in a private/incognito
+window, which has no shared cache. This is the fastest way to confirm
+whether a problem is in the code or in the cache.
 
 ## Backup
 
