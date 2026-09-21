@@ -1,0 +1,12 @@
+body { font: 11pt/1.35 Georgia, "Times New Roman", serif; color: #000; background: #fff; margin: 18mm; }
+h1 { font-size: 18pt; margin: 0 0 6pt 0; }
+h2 { font-size: 13pt; margin: 12pt 0 4pt 0; border-bottom: 1px solid #000; padding-bottom: 2pt; }
+dl { display: grid; grid-template-columns: max-content auto; gap: 2pt 12pt; margin: 0 0 6pt 0; }
+dt { font-weight: bold; }
+table { width: 100%; border-collapse: collapse; margin: 4pt 0; }
+th, td { border: 1px solid #666; padding: 3pt 5pt; text-align: left; font-size: 10pt; }
+th { background: #eee; }
+.report-provenance { margin-top: 24pt; border-top: 1px solid #000; padding-top: 8pt; font-size: 9pt; }
+.report-provenance h3 { font-size: 11pt; margin: 0 0 4pt 0; }
+.disclaimer { font-style: italic; }
+.note { font-size: 9pt; font-style: italic; }
