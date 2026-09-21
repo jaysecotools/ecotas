@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "title": "Common Tasmanian environmental weeds (advisory subset)",
+    "source": "Compiled from Tasmanian Government and DPIPWE published lists (public domain).",
+    "sourceDate": "2023-01-01",
+    "caveat": "Advisory only. Verify against the current Tasmanian Biosecurity weed list before use."
+  },
+  "items": [
+    { "scientificName": "Rubus fruticosus aggregate", "commonName": "Blackberry", "status": "declared_weed", "note": "Widespread in Tasmania." },
+    { "scientificName": "Ulex europaeus", "commonName": "Gorse", "status": "declared_weed", "note": "" },
+    { "scientificName": "Cytisus scoparius", "commonName": "English Broom", "status": "declared_weed", "note": "" },
+    { "scientificName": "Salix cinerea", "commonName": "Grey Willow", "status": "declared_weed", "note": "Riparian zones." },
+    { "scientificName": "Asparagus scandens", "commonName": "Bridal Creeper", "status": "declared_weed", "note": "" },
+    { "scientificName": "Chrysanthemoides monilifera", "commonName": "Boneseed", "status": "declared_weed", "note": "Coastal." }
+  ]
+}
