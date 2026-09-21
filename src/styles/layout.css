@@ -1,0 +1,33 @@
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; letter-spacing: 0.02em; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.notice { color: var(--warn); font-size: 12px; }
+.app-body { display: flex; flex: 1; min-height: 0; }
+.app-nav {
+  width: 200px; background: var(--panel); border-right: 1px solid var(--border);
+  padding: 12px 8px;
+}
+.app-nav ul { list-style: none; padding: 0; margin: 0; }
+.app-nav a {
+  display: block; padding: 8px 10px; color: var(--text); text-decoration: none;
+  border-radius: var(--radius);
+}
+.app-nav a:hover { background: #eef1ec; }
+.app-nav a[aria-current="page"] { background: #e2ece5; font-weight: 600; }
+.app-main { flex: 1; padding: 20px; overflow-y: auto; }
+.view-header { margin-bottom: 16px; }
+.view-header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+}
+@media (max-width: 720px) {
+  .app-nav { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .app-body { flex-direction: column; }
+  .app-nav ul { display: flex; overflow-x: auto; gap: 4px; }
+  .app-nav a { white-space: nowrap; }
+}
