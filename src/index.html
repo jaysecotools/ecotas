@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EcoTas</title>
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/layout.css">
+  <link rel="stylesheet" href="./styles/components.css">
+</head>
+<body>
+  <div id="app" aria-busy="true">
+    <header class="app-header">
+      <div class="brand">EcoTas</div>
+      <div class="header-actions">
+        <span id="storage-notice" class="notice" hidden></span>
+        <button id="btn-export" class="btn">Export</button>
+        <button id="btn-settings" class="btn">Settings</button>
+      </div>
+    </header>
+    <div class="app-body">
+      <nav class="app-nav" aria-label="Main">
+        <ul>
+          <li><a href="#/dashboard" data-route="dashboard">Dashboard</a></li>
+          <li><a href="#/projects"  data-route="projects">Projects</a></li>
+          <li><a href="#/sites"     data-route="sites">Sites</a></li>
+          <li><a href="#/species"   data-route="species">Species</a></li>
+          <li><a href="#/monitoring"data-route="monitoring">Monitoring</a></li>
+          <li><a href="#/maintenance"data-route="maintenance">Maintenance</a></li>
+          <li><a href="#/compliance" data-route="compliance">Compliance</a></li>
+          <li><a href="#/reports"   data-route="reports">Reports</a></li>
+        </ul>
+      </nav>
+      <main class="app-main" id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
