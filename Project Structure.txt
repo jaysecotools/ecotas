@@ -1,0 +1,79 @@
+ecotas/
+├── README.md
+├── LICENSE
+├── package.json
+├── .editorconfig
+├── .gitignore
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── DATA-MODEL.md
+│   ├── TESTING.md
+│   └── ROADMAP.md
+├── src/
+│   ├── index.html
+│   ├── app.js                     # bootstrap only
+│   ├── styles/
+│   │   ├── base.css
+│   │   ├── layout.css
+│   │   ├── components.css
+│   │   └── print.css
+│   ├── core/
+│   │   ├── bus.js                 # tiny event bus
+│   │   ├── ids.js                 # ULID-ish id generator
+│   │   ├── schema.js              # validation primitives
+│   │   ├── errors.js
+│   │   └── logger.js
+│   ├── storage/
+│   │   ├── db.js                  # IndexedDB wrapper
+│   │   ├── migrations.js
+│   │   └── repository.js          # generic CRUD repo per collection
+│   ├── domain/
+│   │   ├── organisation.js
+│   │   ├── projects.js
+│   │   ├── sites.js
+│   │   ├── zones.js
+│   │   ├── species.js
+│   │   ├── monitoring.js
+│   │   ├── maintenance.js
+│   │   ├── assessments.js
+│   │   └── compliance.js
+│   ├── reference/
+│   │   ├── tas-weeds.json
+│   │   ├── tas-vegetation.json
+│   │   ├── tas-nrm-regions.json
+│   │   ├── tas-threatened.json
+│   │   └── index.js
+│   ├── reports/
+│   │   ├── engine.js
+│   │   ├── templates/
+│   │   │   ├── site-assessment.html
+│   │   │   ├── monitoring-summary.html
+│   │   │   ├── maintenance-report.html
+│   │   │   └── project-summary.html
+│   │   └── provenance.js
+│   ├── ui/
+│   │   ├── shell.js
+│   │   ├── router.js
+│   │   ├── toast.js
+│   │   ├── modal.js
+│   │   ├── form.js
+│   │   ├── table.js
+│   │   └── views/
+│   │       ├── dashboard.js
+│   │       ├── projects.js
+│   │       ├── sites.js
+│   │       ├── species.js
+│   │       ├── monitoring.js
+│   │       ├── maintenance.js
+│   │       ├── compliance.js
+│   │       ├── reports.js
+│   │       └── settings.js
+│   └── export/
+│       ├── json.js
+│       ├── csv.js
+│       └── geojson.js
+└── tests/
+    ├── run.js
+    ├── schema.test.js
+    ├── storage.test.js
+    └── reference.test.js
