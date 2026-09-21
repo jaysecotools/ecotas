@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "title": "Tasmanian NRM regions",
+    "source": "NRM regions as recognised for natural resource management planning in Tasmania.",
+    "sourceDate": "2023-01-01"
+  },
+  "items": [
+    { "code": "NRM-N", "name": "North NRM Region" },
+    { "code": "NRM-NW", "name": "North West NRM Region" },
+    { "code": "NRM-S", "name": "South NRM Region" }
+  ]
+}
