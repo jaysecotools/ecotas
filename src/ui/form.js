@@ -1,79 +1,134 @@
-export function buildForm(spec, { onSubmit }) {
-  const form = document.createElement("form");
+// src/ui/form.js
+
+export function buildForm(spec, options) {
+  var onSubmit = options && options.onSubmit;
+  var form = document.createElement("form");
   form.className = "eco-form";
 
-  const fields = {};
-  for (const field of spec) {
-    const wrap = document.createElement("label");
+  var fields = {};
+  var order = [];
+
+  for (var i = 0; i < spec.length; i++) {
+    var field = spec[i];
+
+    var wrap = document.createElement("label");
     wrap.className = "field";
-    wrap.textContent = field.label;
-    const input = createInput(field);
+    wrap.appendChild(document.createTextNode(field.label || field.name));
+
+    var input = createInput(field);
     wrap.appendChild(input.el);
     form.appendChild(wrap);
+
     if (field.help) {
-      const help = document.createElement("small");
+      var help = document.createElement("small");
       help.className = "help";
       help.textContent = field.help;
       wrap.appendChild(help);
     }
+
     fields[field.name] = input;
+    order.push(field.name);
   }
 
-  const submit = document.createElement("button");
+  var submit = document.createElement("button");
   submit.type = "submit";
   submit.className = "btn btn-primary";
   submit.textContent = "Save";
   form.appendChild(submit);
 
-  form.addEventListener("submit", async (e) => {
+  form.addEventListener("submit", function (e) {
     e.preventDefault();
-    const values = {};
-    for (const [name, f] of Object.entries(fields)) values[name] = f.read();
-    try {
-      await onSubmit(values);
-    } catch (err) {
-      alert(err.message || String(err));
+    var values = {};
+    for (var i = 0; i < order.length; i++) {
+      var name = order[i];
+      values[name] = fields[name].read();
+    }
+    if (typeof onSubmit === "function") {
+      try {
+        var result = onSubmit(values);
+        if (result && typeof result.then === "function") {
+          result.catch(function (err) {
+            alert(err && err.message ? err.message : String(err));
+          });
+        }
+      } catch (err) {
+        alert(err && err.message ? err.message : String(err));
+      }
     }
   });
 
-  return { el: form, readValues: () => Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, f.read()])) };
+  return {
+    el: form,
+    readValues: function () {
+      var values = {};
+      for (var i = 0; i < order.length; i++) {
+        var name = order[i];
+        values[name] = fields[name].read();
+      }
+      return values;
+    }
+  };
 }
 
 function createInput(field) {
+  var el;
+
   if (field.type === "textarea") {
-    const el = document.createElement("textarea");
+    el = document.createElement("textarea");
     el.rows = field.rows || 4;
-    if (field.value) el.value = field.value;
-    return { el, read: () => el.value.trim() || undefined };
+    if (field.value !== undefined) el.value = field.value;
+    el.name = field.name;
+    return { el: el, read: function () { return trimOrUndefined(el.value); } };
   }
+
   if (field.type === "select") {
-    const el = document.createElement("select");
-    for (const opt of field.options) {
-      const o = document.createElement("option");
-      o.value = typeof opt === "string" ? opt : opt.value;
-      o.textContent = typeof opt === "string" ? opt : opt.label;
+    el = document.createElement("select");
+    var opts = Array.isArray(field.options) ? field.options : [];
+    for (var i = 0; i < opts.length; i++) {
+      var opt = opts[i];
+      var o = document.createElement("option");
+      if (typeof opt === "string") {
+        o.value = opt;
+        o.textContent = opt;
+      } else {
+        o.value = opt.value;
+        o.textContent = opt.label != null ? opt.label : opt.value;
+      }
       if (field.value === o.value) o.selected = true;
       el.appendChild(o);
     }
-    return { el, read: () => el.value || undefined };
+    el.name = field.name;
+    return { el: el, read: function () { return el.value || undefined; } };
   }
+
   if (field.type === "number") {
-    const el = document.createElement("input");
+    el = document.createElement("input");
     el.type = "number";
     if (field.step) el.step = field.step;
     if (field.min !== undefined) el.min = field.min;
     if (field.max !== undefined) el.max = field.max;
     if (field.value !== undefined) el.value = field.value;
-    return { el, read: () => (el.value === "" ? undefined : Number(el.value)) };
+    el.name = field.name;
+    return { el: el, read: function () { return el.value === "" ? undefined : Number(el.value); } };
   }
+
   if (field.type === "date") {
-    const el = document.createElement("input");
+    el = document.createElement("input");
     el.type = "date";
     if (field.value) el.value = field.value;
-    return { el, read: () => el.value || undefined };
+    el.name = field.name;
+    return { el: el, read: function () { return el.value || undefined; } };
   }
-  const el = document.createElement("input");
+
+  el = document.createElement("input");
   el.type = field.type || "text";
   if (field.value !== undefined) el.value = field.value;
-  return { el, read: () => el.value.trim() || undefined };
+  el.name = field.name;
+  return { el: el, read: function () { return trimOrUndefined(el.value); } };
+}
+
+function trimOrUndefined(v) {
+  if (v === undefined || v === null) return undefined;
+  var t = String(v).trim();
+  return t === "" ? undefined : t;
 }
