@@ -1,0 +1,1596 @@
+EcoTas — Why the Interface Is Blank, and What to Add
+
+You're seeing a blank interface for a specific, expected reason. Let me be direct about what's missing and why.
+
+---
+
+The Root Cause
+
+I delivered the architecture and core modules in the previous message, but I described several files as "equivalent views exist" or "equivalent templates exist" without actually writing them out. The app.js file imports them all at module load time. When any one of those imports fails (because the file doesn't exist), the entire ES module graph fails to load, and nothing renders — you get a blank page and (silently, unless you open the console) a series of 404 errors.
+
+Specifically, these files are imported but were not provided:
+
+File Referenced by Status
+src/ui/views/dashboard.js app.js Missing
+src/ui/views/sites.js app.js Missing
+src/ui/views/species.js app.js Missing
+src/ui/views/monitoring.js app.js Missing
+src/ui/views/maintenance.js app.js Missing
+src/ui/views/compliance.js app.js Missing
+src/reports/templates/site-assessment.html.js app.js Missing (I wrote the code inline but not as a file)
+src/reports/templates/monitoring-summary.html.js app.js Missing
+src/reports/templates/maintenance-report.html.js app.js Missing
+src/reports/templates/project-summary.html.js app.js Missing
+src/domain/zones.js referenced in docs/DATA-MODEL.md Missing
+src/reference/tas-vegetation.json reference/index.js Missing
+src/reference/tas-threatened.json reference/index.js Missing
+src/ui/modal.js app.js shell imports Missing
+src/ui/table.js not yet used Missing
+
+To answer your direct question: Yes, the report templates are required — app.js imports them at the top of the module, so if any of them is missing, the module graph fails and nothing at all renders, not even the dashboard.
+
+But the templates are not the only problem. Every view file is also missing. So the fix is: write every imported file, even if some are minimal, OR change app.js to lazily import them only when needed.
+
+I'll do both: (a) provide the missing files fully, and (b) change app.js to load views lazily so that a missing view degrades gracefully instead of blanking the whole app.
+
+---
+
+What I'll Deliver in This Message
+
+1. A corrected app.js — lazy view loading, no import-time failures.
+2. A boot fallback in index.html — so a console error message is visible even if module loading fails.
+3. All missing view files, fully written:
+   · dashboard.js
+   · sites.js
+   · species.js
+   · monitoring.js
+   · maintenance.js
+   · compliance.js
+4. All missing report template files, fully written.
+5. src/domain/zones.js — even though the Zones view is deferred to Stage 3, the module exists so nothing references a non-existent file.
+6. Two additional reference files — tas-vegetation.json and tas-threatened.json.
+7. src/ui/modal.js and src/ui/table.js — small helpers used by the views.
+
+After you drop these into your ecotas/ tree and refresh, the app will render.
+
+---
+
+1. Corrected src/app.js
+
+The change: views are registered lazily. app.js no longer imports them at the top. Instead, each view is loaded on demand the first time the user navigates to it. If a view file is missing, only that route fails — the shell, header, and nav still render.
+
+```js
+// src/app.js
+import { runMigrations } from "./storage/migrations.js";
+import { open } from "./storage/db.js";
+import { logger, setLevel } from "./core/logger.js";
+import { router, registerView } from "./ui/router.js";
+import { mount as mountShell } from "./ui/shell.js";
+
+const APP_VERSION = "0.2.1";
+
+// Lazy view registry. Each entry is a function that returns a Promise
+// resolving to a view module ({ mount, unmount }).
+const VIEW_LOADERS = {
+  dashboard:   () => import("./ui/views/dashboard.js"),
+  projects:    () => import("./ui/views/projects.js"),
+  sites:       () => import("./ui/views/sites.js"),
+  species:     () => import("./ui/views/species.js"),
+  monitoring:  () => import("./ui/views/monitoring.js"),
+  maintenance: () => import("./ui/views/maintenance.js"),
+  compliance:  () => import("./ui/views/compliance.js"),
+  reports:     () => import("./ui/views/reports.js"),
+  settings:    () => import("./ui/views/settings.js"),
+};
+
+// Report templates are also lazy-loaded on first report render, so a
+// broken template cannot blank the entire application.
+async function ensureReportTemplates() {
+  // The import of each template file registers it with the report engine
+  // as a side effect. We import them all once; failures are logged but
+  // do not propagate.
+  const files = [
+    "./reports/templates/site-assessment.html.js",
+    "./reports/templates/monitoring-summary.html.js",
+    "./reports/templates/maintenance-report.html.js",
+    "./reports/templates/project-summary.html.js",
+  ];
+  for (const f of files) {
+    try {
+      await import(/* @vite-ignore */ f);
+    } catch (err) {
+      logger.warn(`Report template failed to load: ${f}`, err);
+    }
+  }
+}
+
+async function boot() {
+  setLevel("info");
+  logger.info(`EcoTas v${APP_VERSION} booting`);
+
+  // Wrap each major step so a single failure shows a useful message
+  // instead of a blank page.
+  try {
+    await open();
+  } catch (err) {
+    return fatal("Storage could not be opened", err);
+  }
+
+  try {
+    await runMigrations();
+  } catch (err) {
+    return fatal("Migrations failed", err);
+  }
+
+  try {
+    mountShell({ appVersion: APP_VERSION });
+  } catch (err) {
+    return fatal("Shell could not be mounted", err);
+  }
+
+  // Register lazy view loaders.
+  for (const [route, loader] of Object.entries(VIEW_LOADERS)) {
+    registerView(route, loader);
+  }
+
+  // Kick off template loading without blocking boot.
+  ensureReportTemplates().catch((e) => logger.warn("Template preload error", e));
+
+  try {
+    await router.start();
+  } catch (err) {
+    return fatal("Router failed to start", err);
+  }
+
+  document.getElementById("app").setAttribute("aria-busy", "false");
+  logger.info("EcoTas ready");
+}
+
+function fatal(message, err) {
+  logger.error(message, err);
+  const main = document.getElementById("main");
+  if (main) {
+    main.innerHTML = `
+      <div class="error-panel">
+        <h2>${escape(message)}</h2>
+        <p>${escape(err && err.message ? err.message : String(err))}</p>
+        <p class="help">Open the browser console for full details.</p>
+      </div>`;
+  }
+  document.getElementById("app").setAttribute("aria-busy", "false");
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+boot().catch((err) => fatal("EcoTas could not start", err));
+```
+
+2. Corrected src/ui/router.js
+
+Previously registerView stored a module. Now it stores either a module or a loader function. We resolve lazily and cache the resolved module.
+
+```js
+// src/ui/router.js
+import { emit } from "../core/bus.js";
+import { logger } from "../core/logger.js";
+
+const views = new Map();       // route -> module | loader
+const resolved = new Map();    // route -> module (cache)
+let current = null;
+
+export function registerView(route, viewOrLoader) {
+  views.set(route, viewOrLoader);
+}
+
+function parseHash() {
+  const raw = (location.hash || "#/dashboard").replace(/^#\/?/, "");
+  const [route] = raw.split("/");
+  return route || "dashboard";
+}
+
+async function resolveView(route) {
+  if (resolved.has(route)) return resolved.get(route);
+  const entry = views.get(route);
+  if (!entry) return null;
+  let mod = entry;
+  if (typeof entry === "function") {
+    mod = await entry();
+  }
+  resolved.set(route, mod);
+  return mod;
+}
+
+async function render() {
+  const route = parseHash();
+  const main = document.getElementById("main");
+  if (!main) return;
+
+  if (current && current.unmount) {
+    try { current.unmount(); } catch (err) { logger.warn("unmount error", err); }
+  }
+  current = null;
+  main.innerHTML = "";
+
+  let mod;
+  try {
+    mod = await resolveView(route);
+  } catch (err) {
+    logger.error(`View "${route}" failed to load`, err);
+    main.innerHTML = `
+      <div class="error-panel">
+        <h2>View unavailable</h2>
+        <p>The "${escape(route)}" view could not be loaded: ${escape(err.message || String(err))}</p>
+        <p class="help">This usually means a file is missing from <code>src/ui/views/</code>.</p>
+      </div>`;
+    return;
+  }
+
+  if (!mod) {
+    main.innerHTML = `
+      <div class="error-panel">
+        <h2>Not found</h2>
+        <p>No view registered for "${escape(route)}".</p>
+      </div>`;
+    return;
+  }
+
+  current = mod;
+  try {
+    await mod.mount({ container: main, route });
+    emit("route:changed", { route });
+  } catch (err) {
+    logger.error(`View "${route}" failed to mount`, err);
+    main.innerHTML = `
+      <div class="error-panel">
+        <h2>View error</h2>
+        <p>${escape(err.message || String(err))}</p>
+      </div>`;
+  }
+}
+
+export const router = {
+  async start() {
+    if (!location.hash) location.hash = "#/dashboard";
+    window.addEventListener("hashchange", render);
+    await render();
+  },
+  navigate(route) { location.hash = "#/" + route; },
+};
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+3. Corrected src/index.html
+
+Add a fatal fallback so that if the module graph fails, the user sees a real message instead of a blank screen.
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EcoTas</title>
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/layout.css">
+  <link rel="stylesheet" href="./styles/components.css">
+</head>
+<body>
+  <div id="app" aria-busy="true">
+    <header class="app-header">
+      <div class="brand">EcoTas</div>
+      <div class="header-actions">
+        <span id="storage-notice" class="notice" hidden></span>
+        <button id="btn-export" class="btn">Export</button>
+        <button id="btn-settings" class="btn">Settings</button>
+      </div>
+    </header>
+    <div class="app-body">
+      <nav class="app-nav" aria-label="Main">
+        <ul>
+          <li><a href="#/dashboard"   data-route="dashboard">Dashboard</a></li>
+          <li><a href="#/projects"    data-route="projects">Projects</a></li>
+          <li><a href="#/sites"       data-route="sites">Sites</a></li>
+          <li><a href="#/species"     data-route="species">Species</a></li>
+          <li><a href="#/monitoring"  data-route="monitoring">Monitoring</a></li>
+          <li><a href="#/maintenance" data-route="maintenance">Maintenance</a></li>
+          <li><a href="#/compliance"  data-route="compliance">Compliance</a></li>
+          <li><a href="#/reports"     data-route="reports">Reports</a></li>
+        </ul>
+      </nav>
+      <main class="app-main" id="main" tabindex="-1">
+        <noscript><p>EcoTas requires JavaScript.</p></noscript>
+        <p class="help">Loading EcoTas…</p>
+      </main>
+    </div>
+  </div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <!-- Fallback: if the module graph fails to load, show a diagnostic. -->
+  <script>
+    window.addEventListener("error", function (e) {
+      var main = document.getElementById("main");
+      if (!main) return;
+      if (main.querySelector(".error-panel")) return;
+      main.innerHTML =
+        '<div class="error-panel">' +
+        '<h2>A script error occurred</h2>' +
+        '<p>' + String(e.message || e.error || "Unknown error").replace(/[<>&]/g, "") + '</p>' +
+        '<p class="help">Check the browser console and the Network tab for missing files.</p>' +
+        '</div>';
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      var main = document.getElementById("main");
+      if (!main) return;
+      if (main.querySelector(".error-panel")) return;
+      var reason = e.reason && (e.reason.message || e.reason) || "Unknown promise rejection";
+      main.innerHTML =
+        '<div class="error-panel">' +
+        '<h2>Startup failed</h2>' +
+        '<p>' + String(reason).replace(/[<>&]/g, "") + '</p>' +
+        '<p class="help">This is often a missing module file. Check the console.</p>' +
+        '</div>';
+    });
+  </script>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+```
+
+---
+
+4. Missing View Files
+
+Each view follows the same shape: mount({ container }) and unmount(). They subscribe to bus events and re-render on change.
+
+4.1 src/ui/views/dashboard.js
+
+```js
+import { projects } from "../../domain/projects.js";
+import { sites } from "../../domain/sites.js";
+import { species } from "../../domain/species.js";
+import { observations } from "../../domain/monitoring.js";
+import { maintenance } from "../../domain/maintenance.js";
+import { assessments } from "../../domain/assessments.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  const events = [
+    "projects:created", "projects:updated", "projects:deleted",
+    "sites:created",    "sites:updated",    "sites:deleted",
+    "species:created",  "species:updated",  "species:deleted",
+    "observations:created", "observations:updated", "observations:deleted",
+    "maintenance:created",  "maintenance:updated",  "maintenance:deleted",
+    "assessments:created",  "assessments:updated",  "assessments:deleted",
+  ];
+  for (const ev of events) unsubs.push(on(ev, render));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+
+  const [
+    allProjects, allSites, allSpecies, allObs, allMaint, allAssess,
+  ] = await Promise.all([
+    projects.list(),
+    sites.list(),
+    species.list(),
+    observations.list(),
+    maintenance.list(),
+    assessments.list(),
+  ]);
+
+  const now = Date.now();
+  const overdueMaintenance = allMaint.filter(
+    (m) => m.dueDate && m.status !== "completed" && m.status !== "cancelled" && new Date(m.dueDate).getTime() < now
+  );
+  const upcomingMaintenance = allMaint
+    .filter((m) => m.dueDate && m.status !== "completed" && m.status !== "cancelled" && new Date(m.dueDate).getTime() >= now)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    .slice(0, 8);
+
+  const recentObservations = allObs
+    .slice()
+    .sort((a, b) => (b.observedAt || "").localeCompare(a.observedAt || ""))
+    .slice(0, 8);
+
+  containerRef.innerHTML = `
+    <header class="view-header">
+      <h1>Dashboard</h1>
+      <p class="help">A summary of your EcoTas data. All figures are computed from local records only.</p>
+    </header>
+
+    <section class="panel grid-4">
+      <div class="stat"><div class="stat-num">${allProjects.length}</div><div class="stat-label">Projects</div></div>
+      <div class="stat"><div class="stat-num">${allSites.length}</div><div class="stat-label">Sites</div></div>
+      <div class="stat"><div class="stat-num">${allSpecies.length}</div><div class="stat-label">Species records</div></div>
+      <div class="stat"><div class="stat-num">${allObs.length}</div><div class="stat-label">Observations</div></div>
+    </section>
+
+    <section class="panel grid-2">
+      <div>
+        <h2>Maintenance attention</h2>
+        ${overdueMaintenance.length === 0
+          ? `<p class="help">No overdue maintenance.</p>`
+          : `<p><strong>${overdueMaintenance.length}</strong> overdue item(s).</p>
+             <ul class="list">
+               ${overdueMaintenance.slice(0, 6).map((m) =>
+                 `<li><span class="pill pill-warn">Due ${escape(m.dueDate)}</span> ${escape(m.title)}</li>`
+               ).join("")}
+             </ul>`}
+        <h3>Upcoming</h3>
+        ${upcomingMaintenance.length === 0
+          ? `<p class="help">Nothing scheduled.</p>`
+          : `<ul class="list">
+               ${upcomingMaintenance.map((m) =>
+                 `<li><span class="pill">${escape(m.dueDate)}</span> ${escape(m.title)}</li>`
+               ).join("")}
+             </ul>`}
+      </div>
+      <div>
+        <h2>Recent observations</h2>
+        ${recentObservations.length === 0
+          ? `<p class="help">No observations recorded.</p>`
+          : `<ul class="list">
+               ${recentObservations.map((o) =>
+                 `<li><span class="pill">${escape(o.observedAt)}</span> ${escape(o.type)} — ${escape(o.observer)}</li>`
+               ).join("")}
+             </ul>`}
+        <h3>Recent assessments</h3>
+        ${allAssess.length === 0
+          ? `<p class="help">No assessments recorded.</p>`
+          : `<ul class="list">
+               ${allAssess.slice().sort((a, b) => (b.assessedAt || "").localeCompare(a.assessedAt || "")).slice(0, 5).map((a) =>
+                 `<li><span class="pill">${escape(a.assessedAt)}</span> ${escape(a.rating)}</li>`
+               ).join("")}
+             </ul>`}
+      </div>
+    </section>
+  `;
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+4.2 src/ui/views/sites.js
+
+```js
+import { sites, SITE_STATUSES } from "../../domain/sites.js";
+import { projects } from "../../domain/projects.js";
+import { buildForm } from "../form.js";
+import { toast } from "../toast.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  unsubs.push(on("sites:created", render));
+  unsubs.push(on("sites:updated", render));
+  unsubs.push(on("sites:deleted", render));
+  unsubs.push(on("projects:created", render));
+  unsubs.push(on("projects:deleted", render));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+  const [allSites, allProjects] = await Promise.all([sites.list(), projects.list()]);
+  const projectMap = new Map(allProjects.map((p) => [p.id, p.name]));
+
+  if (allProjects.length === 0) {
+    containerRef.innerHTML = `
+      <header class="view-header"><h1>Sites</h1></header>
+      <section class="panel">
+        <p>Create a project first — sites belong to a project.</p>
+        <a class="btn btn-primary" href="#/projects">Go to Projects</a>
+      </section>`;
+    return;
+  }
+
+  containerRef.innerHTML = `
+    <header class="view-header"><h1>Sites</h1></header>
+
+    <section class="panel" id="site-form-panel">
+      <h2>Add site</h2>
+    </section>
+
+    <section class="panel">
+      <h2>All sites</h2>
+      <table class="eco-table">
+        <thead><tr>
+          <th>Name</th><th>Project</th><th>Status</th><th>NRM region</th><th>Area (ha)</th><th>Centre</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${allSites.length === 0
+            ? `<tr><td colspan="7">No sites yet.</td></tr>`
+            : allSites.map((s) => `
+              <tr>
+                <td>${escape(s.name)}</td>
+                <td>${escape(projectMap.get(s.projectId) || "—")}</td>
+                <td>${escape(s.status)}</td>
+                <td>${escape(s.nrmRegion || "")}</td>
+                <td>${s.areaHectares ?? ""}</td>
+                <td>${s.centre ? `${s.centre.lat.toFixed(4)}, ${s.centre.lng.toFixed(4)}` : "—"}</td>
+                <td class="row-actions">
+                  <button class="btn btn-danger btn-sm" data-delete="${s.id}">Delete</button>
+                </td>
+              </tr>`).join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+
+  const form = buildForm([
+    { name: "projectId", label: "Project", type: "select",
+      options: allProjects.map((p) => ({ value: p.id, label: p.name })) },
+    { name: "name", label: "Site name", type: "text" },
+    { name: "status", label: "Status", type: "select", options: SITE_STATUSES, value: "active" },
+    { name: "nrmRegion", label: "NRM region", type: "text" },
+    { name: "landTenure", label: "Land tenure", type: "text" },
+    { name: "areaHectares", label: "Area (ha)", type: "number", min: 0, step: "0.01" },
+    { name: "latitude", label: "Centre latitude", type: "number", step: "any" },
+    { name: "longitude", label: "Centre longitude", type: "number", step: "any" },
+    { name: "description", label: "Description", type: "textarea" },
+  ], {
+    onSubmit: async (values) => {
+      const payload = {
+        projectId: values.projectId,
+        name: values.name,
+        status: values.status,
+        nrmRegion: values.nrmRegion,
+        landTenure: values.landTenure,
+        areaHectares: values.areaHectares,
+        centre: { lat: Number(values.latitude), lng: Number(values.longitude) },
+        boundary: [],
+        description: values.description,
+        address: undefined,
+      };
+      await sites.create(payload);
+      toast("Site saved", "success");
+    },
+  }).el;
+  containerRef.querySelector("#site-form-panel").appendChild(form);
+
+  containerRef.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this site? Its species, observations, assessments, and maintenance records will remain and must be reviewed.")) return;
+      await sites.remove(btn.dataset.delete);
+      toast("Site deleted", "info");
+    });
+  });
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+4.3 src/ui/views/species.js
+
+```js
+import { species, SPECIES_KINGDOMS, SPECIES_STATUSES } from "../../domain/species.js";
+import { sites } from "../../domain/sites.js";
+import { loadReference } from "../../reference/index.js";
+import { buildForm } from "../form.js";
+import { toast } from "../toast.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  unsubs.push(on("species:created", render));
+  unsubs.push(on("species:updated", render));
+  unsubs.push(on("species:deleted", render));
+  unsubs.push(on("sites:created", render));
+  unsubs.push(on("sites:deleted", render));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+  const [allSpecies, allSites, weeds, threatened] = await Promise.all([
+    species.list(),
+    sites.list(),
+    loadReference("tas-weeds"),
+    loadReference("tas-threatened"),
+  ]);
+  const siteMap = new Map(allSites.map((s) => [s.id, s.name]));
+
+  if (allSites.length === 0) {
+    containerRef.innerHTML = `
+      <header class="view-header"><h1>Species</h1></header>
+      <section class="panel">
+        <p>Create a site first — species records belong to a site.</p>
+        <a class="btn btn-primary" href="#/sites">Go to Sites</a>
+      </section>`;
+    return;
+  }
+
+  containerRef.innerHTML = `
+    <header class="view-header"><h1>Species</h1></header>
+
+    <section class="panel">
+      <h2>Add species record</h2>
+      <p class="help">Reference lists are advisory. ${escape(weeds.metadata.title)} (${escape(weeds.metadata.sourceDate)}).</p>
+      <div class="reference-suggest">
+        <label>Suggest from Tasmanian weed list
+          <select id="weed-suggest">
+            <option value="">—</option>
+            ${weeds.items.map((it) => `<option value="${escape(it.scientificName)}">${escape(it.commonName)} — ${escape(it.scientificName)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Suggest from Tasmanian threatened list
+          <select id="threat-suggest">
+            <option value="">—</option>
+            ${threatened.items.map((it) => `<option value="${escape(it.scientificName)}">${escape(it.commonName)} — ${escape(it.scientificName)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div id="species-form-slot"></div>
+    </section>
+
+    <section class="panel">
+      <h2>All species (${allSpecies.length})</h2>
+      <table class="eco-table">
+        <thead><tr>
+          <th>Scientific name</th><th>Common name</th><th>Kingdom</th><th>Status</th><th>Site</th><th>Observed</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${allSpecies.length === 0
+            ? `<tr><td colspan="7">No species recorded.</td></tr>`
+            : allSpecies.slice().sort((a, b) => a.scientificName.localeCompare(b.scientificName)).map((s) => `
+              <tr>
+                <td><em>${escape(s.scientificName)}</em></td>
+                <td>${escape(s.commonName || "")}</td>
+                <td>${escape(s.kingdom)}</td>
+                <td>${escape(s.status)}</td>
+                <td>${escape(siteMap.get(s.siteId) || "—")}</td>
+                <td>${escape(s.observedAt || "")}</td>
+                <td class="row-actions">
+                  <button class="btn btn-danger btn-sm" data-delete="${s.id}">Delete</button>
+                </td>
+              </tr>`).join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+
+  // Build the form.
+  const form = buildForm([
+    { name: "siteId", label: "Site", type: "select",
+      options: allSites.map((s) => ({ value: s.id, label: s.name })) },
+    { name: "scientificName", label: "Scientific name", type: "text" },
+    { name: "commonName", label: "Common name", type: "text" },
+    { name: "kingdom", label: "Kingdom", type: "select", options: SPECIES_KINGDOMS, value: "flora" },
+    { name: "status", label: "Status", type: "select", options: SPECIES_STATUSES, value: "native" },
+    { name: "count", label: "Count", type: "number", min: 0, step: "1" },
+    { name: "observedAt", label: "Observed on", type: "date" },
+    { name: "habitat", label: "Habitat", type: "text" },
+    { name: "notes", label: "Notes", type: "textarea" },
+  ], {
+    onSubmit: async (values) => {
+      await species.create({
+        ...values,
+        source: "field_observation",
+      });
+      toast("Species saved", "success");
+    },
+  }).el;
+  containerRef.querySelector("#species-form-slot").appendChild(form);
+
+  // Wire the reference dropdowns into the form fields.
+  const sciInput = form.querySelector('input[name="scientificName"]');
+  const comInput = form.querySelector('input[name="commonName"]');
+  containerRef.querySelector("#weed-suggest").addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (!val) return;
+    const item = weeds.items.find((i) => i.scientificName === val);
+    if (item) {
+      sciInput.value = item.scientificName;
+      comInput.value = item.commonName || "";
+    }
+  });
+  containerRef.querySelector("#threat-suggest").addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (!val) return;
+    const item = threatened.items.find((i) => i.scientificName === val);
+    if (item) {
+      sciInput.value = item.scientificName;
+      comInput.value = item.commonName || "";
+    }
+  });
+
+  containerRef.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this species record?")) return;
+      await species.remove(btn.dataset.delete);
+      toast("Species deleted", "info");
+    });
+  });
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+4.4 src/ui/views/monitoring.js
+
+```js
+import { observations, MONITORING_TYPES } from "../../domain/monitoring.js";
+import { sites } from "../../domain/sites.js";
+import { species } from "../../domain/species.js";
+import { buildForm } from "../form.js";
+import { toast } from "../toast.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  ["observations:created","observations:updated","observations:deleted","sites:created","sites:deleted"]
+    .forEach((ev) => unsubs.push(on(ev, render)));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+  const [allObs, allSites] = await Promise.all([observations.list(), sites.list()]);
+  const siteMap = new Map(allSites.map((s) => [s.id, s.name]));
+
+  if (allSites.length === 0) {
+    containerRef.innerHTML = `
+      <header class="view-header"><h1>Monitoring</h1></header>
+      <section class="panel"><p>Create a site first.</p><a class="btn btn-primary" href="#/sites">Go to Sites</a></section>`;
+    return;
+  }
+
+  containerRef.innerHTML = `
+    <header class="view-header"><h1>Monitoring</h1></header>
+
+    <section class="panel" id="mon-form-slot">
+      <h2>Add observation</h2>
+    </section>
+
+    <section class="panel">
+      <h2>Observations (${allObs.length})</h2>
+      <table class="eco-table">
+        <thead><tr><th>Date</th><th>Type</th><th>Site</th><th>Observer</th><th>Location</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+          ${allObs.length === 0
+            ? `<tr><td colspan="7">No observations yet.</td></tr>`
+            : allObs.slice().sort((a, b) => (b.observedAt || "").localeCompare(a.observedAt || "")).map((o) => `
+              <tr>
+                <td>${escape(o.observedAt)}</td>
+                <td>${escape(o.type)}</td>
+                <td>${escape(siteMap.get(o.siteId) || "—")}</td>
+                <td>${escape(o.observer)}</td>
+                <td>${o.location ? `${o.location.lat.toFixed(4)}, ${o.location.lng.toFixed(4)}` : "—"}</td>
+                <td>${escape((o.notes || "").slice(0, 60))}</td>
+                <td class="row-actions"><button class="btn btn-danger btn-sm" data-delete="${o.id}">Delete</button></td>
+              </tr>`).join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+
+  const form = buildForm([
+    { name: "siteId", label: "Site", type: "select",
+      options: allSites.map((s) => ({ value: s.id, label: s.name })) },
+    { name: "type", label: "Type", type: "select", options: MONITORING_TYPES, value: "vegetation" },
+    { name: "observedAt", label: "Date", type: "date" },
+    { name: "observer", label: "Observer", type: "text" },
+    { name: "protocol", label: "Protocol", type: "text" },
+    { name: "latitude", label: "Latitude", type: "number", step: "any" },
+    { name: "longitude", label: "Longitude", type: "number", step: "any" },
+    { name: "notes", label: "Notes", type: "textarea" },
+  ], {
+    onSubmit: async (values) => {
+      await observations.create({
+        siteId: values.siteId,
+        type: values.type,
+        observedAt: values.observedAt,
+        observer: values.observer,
+        protocol: values.protocol,
+        location: { lat: Number(values.latitude), lng: Number(values.longitude) },
+        measurements: {},
+        speciesIds: [],
+        notes: values.notes,
+      });
+      toast("Observation saved", "success");
+    },
+  }).el;
+  containerRef.querySelector("#mon-form-slot").appendChild(form);
+
+  containerRef.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this observation?")) return;
+      await observations.remove(btn.dataset.delete);
+      toast("Observation deleted", "info");
+    });
+  });
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+4.5 src/ui/views/maintenance.js
+
+```js
+import {
+  maintenance,
+  MAINTENANCE_TYPES,
+  MAINTENANCE_STATUSES,
+  MAINTENANCE_PRIORITIES,
+} from "../../domain/maintenance.js";
+import { sites } from "../../domain/sites.js";
+import { buildForm } from "../form.js";
+import { toast } from "../toast.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  ["maintenance:created","maintenance:updated","maintenance:deleted","sites:created","sites:deleted"]
+    .forEach((ev) => unsubs.push(on(ev, render)));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+  const [all, allSites] = await Promise.all([maintenance.list(), sites.list()]);
+  const siteMap = new Map(allSites.map((s) => [s.id, s.name]));
+
+  if (allSites.length === 0) {
+    containerRef.innerHTML = `
+      <header class="view-header"><h1>Maintenance</h1></header>
+      <section class="panel"><p>Create a site first.</p><a class="btn btn-primary" href="#/sites">Go to Sites</a></section>`;
+    return;
+  }
+
+  const now = Date.now();
+  const overdue = all.filter((m) => m.dueDate && m.status !== "completed" && m.status !== "cancelled" && new Date(m.dueDate).getTime() < now);
+
+  containerRef.innerHTML = `
+    <header class="view-header"><h1>Maintenance</h1></header>
+
+    <section class="panel" id="maint-form-slot">
+      <h2>Add maintenance activity</h2>
+    </section>
+
+    <section class="panel">
+      <h2>All activities (${all.length})${overdue.length ? ` — <span class="pill pill-warn">${overdue.length} overdue</span>` : ""}</h2>
+      <table class="eco-table">
+        <thead><tr><th>Title</th><th>Type</th><th>Site</th><th>Status</th><th>Priority</th><th>Due</th><th></th></tr></thead>
+        <tbody>
+          ${all.length === 0
+            ? `<tr><td colspan="7">No maintenance scheduled.</td></tr>`
+            : all.slice().sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).map((m) => {
+                const isOverdue = m.dueDate && m.status !== "completed" && m.status !== "cancelled" && new Date(m.dueDate).getTime() < now;
+                return `
+                  <tr>
+                    <td>${escape(m.title)}</td>
+                    <td>${escape(m.type)}</td>
+                    <td>${escape(siteMap.get(m.siteId) || "—")}</td>
+                    <td>${escape(m.status)}${isOverdue ? ` <span class="pill pill-warn">overdue</span>` : ""}</td>
+                    <td>${escape(m.priority)}</td>
+                    <td>${escape(m.dueDate || "")}</td>
+                    <td class="row-actions">
+                      ${m.status !== "completed"
+                        ? `<button class="btn btn-sm" data-complete="${m.id}">Complete</button> `
+                        : ""}
+                      <button class="btn btn-danger btn-sm" data-delete="${m.id}">Delete</button>
+                    </td>
+                  </tr>`;
+              }).join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+
+  const form = buildForm([
+    { name: "siteId", label: "Site", type: "select",
+      options: allSites.map((s) => ({ value: s.id, label: s.name })) },
+    { name: "title", label: "Title", type: "text" },
+    { name: "type", label: "Type", type: "select", options: MAINTENANCE_TYPES, value: "weed_control" },
+    { name: "status", label: "Status", type: "select", options: MAINTENANCE_STATUSES, value: "planned" },
+    { name: "priority", label: "Priority", type: "select", options: MAINTENANCE_PRIORITIES, value: "medium" },
+    { name: "dueDate", label: "Due date", type: "date" },
+    { name: "assignee", label: "Assignee", type: "text" },
+    { name: "description", label: "Description", type: "textarea" },
+  ], {
+    onSubmit: async (values) => {
+      await maintenance.create(values);
+      toast("Maintenance activity saved", "success");
+    },
+  }).el;
+  containerRef.querySelector("#maint-form-slot").appendChild(form);
+
+  containerRef.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this maintenance activity?")) return;
+      await maintenance.remove(btn.dataset.delete);
+      toast("Deleted", "info");
+    });
+  });
+  containerRef.querySelectorAll("[data-complete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await maintenance.update(btn.dataset.complete, {
+        status: "completed",
+        completedAt: new Date().toISOString().slice(0, 10),
+      });
+      toast("Marked as completed", "success");
+    });
+  });
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+4.6 src/ui/views/compliance.js
+
+```js
+import { complianceItems, COMPLIANCE_STATUSES } from "../../domain/compliance.js";
+import { sites } from "../../domain/sites.js";
+import { buildForm } from "../form.js";
+import { toast } from "../toast.js";
+import { on } from "../../core/bus.js";
+
+let containerRef = null;
+let unsubs = [];
+
+export async function mount({ container }) {
+  containerRef = container;
+  ["compliance:created","compliance:updated","compliance:deleted","sites:created","sites:deleted"]
+    .forEach((ev) => unsubs.push(on(ev, render)));
+  await render();
+}
+
+export function unmount() {
+  unsubs.forEach((u) => u());
+  unsubs = [];
+  containerRef = null;
+}
+
+async function render() {
+  if (!containerRef) return;
+  const [all, allSites] = await Promise.all([complianceItems.list(), sites.list()]);
+  const siteMap = new Map(allSites.map((s) => [s.id, s.name]));
+
+  containerRef.innerHTML = `
+    <header class="view-header">
+      <h1>Compliance</h1>
+      <p class="help">
+        EcoTas does <strong>not</strong> assert that any legislation, standard, or framework has been satisfied.
+        The items below are user-defined checklist records. Any claim of compliance is the user's responsibility
+        and must be supported by the user's own evidence and professional advice.
+      </p>
+    </header>
+
+    <section class="panel" id="comp-form-slot">
+      <h2>Add checklist item</h2>
+    </section>
+
+    <section class="panel">
+      <h2>All items (${all.length})</h2>
+      <table class="eco-table">
+        <thead><tr><th>Framework</th><th>Requirement</th><th>Status</th><th>Site</th><th>Review</th><th></th></tr></thead>
+        <tbody>
+          ${all.length === 0
+            ? `<tr><td colspan="6">No checklist items yet.</td></tr>`
+            : all.map((c) => `
+              <tr>
+                <td>${escape(c.framework)}</td>
+                <td>${escape(c.requirement)}</td>
+                <td>${escape(c.status)}</td>
+                <td>${escape(siteMap.get(c.siteId) || "—")}</td>
+                <td>${escape(c.reviewDate || "")}</td>
+                <td class="row-actions"><button class="btn btn-danger btn-sm" data-delete="${c.id}">Delete</button></td>
+              </tr>`).join("")}
+        </tbody>
+      </table>
+    </section>
+  `;
+
+  const siteOptions = allSites.length === 0
+    ? [{ value: "", label: "(no sites yet)" }]
+    : allSites.map((s) => ({ value: s.id, label: s.name }));
+
+  const form = buildForm([
+    { name: "siteId", label: "Site", type: "select", options: siteOptions },
+    { name: "framework", label: "Framework / source", type: "text",
+      help: "e.g. your organisation's EMS, a client requirement, or a specific permit condition." },
+    { name: "reference", label: "Reference (optional)", type: "text" },
+    { name: "requirement", label: "Requirement", type: "text" },
+    { name: "status", label: "Status", type: "select", options: COMPLIANCE_STATUSES, value: "not_started" },
+    { name: "reviewDate", label: "Next review", type: "date" },
+    { name: "evidence", label: "Evidence / notes", type: "textarea" },
+  ], {
+    onSubmit: async (values) => {
+      if (!values.siteId) throw new Error("Create a site first");
+      await complianceItems.create(values);
+      toast("Checklist item saved", "success");
+    },
+  }).el;
+  containerRef.querySelector("#comp-form-slot").appendChild(form);
+
+  containerRef.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete this checklist item?")) return;
+      await complianceItems.remove(btn.dataset.delete);
+      toast("Deleted", "info");
+    });
+  });
+}
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+```
+
+---
+
+5. Missing Report Templates
+
+The engine in src/reports/engine.js calls registerTemplate(id, fn). Each template file is a side-effect import that registers itself.
+
+5.1 src/reports/templates/site-assessment.html.js
+
+```js
+import { registerTemplate } from "../engine.js";
+import { heuristicIndex } from "../../domain/assessments.js";
+
+const h = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+registerTemplate("site-assessment", ({ site, assessments, observations, species }) => {
+  const rows = assessments.map((a) => {
+    const idx = heuristicIndex(a);
+    return `
+      <tr>
+        <td>${h(a.assessedAt)}</td>
+        <td>${h(a.assessor)}</td>
+        <td>${h(a.rating)}</td>
+        <td>${idx ? idx.value + " (heuristic)" : "—"}</td>
+        <td>${h((a.threats || []).join(", "))}</td>
+        <td>${h(a.limitations || "")}</td>
+      </tr>`;
+  }).join("");
+
+  return `
+    <h1>Site assessment report — ${h(site.name)}</h1>
+    <section>
+      <h2>Site</h2>
+      <dl>
+        <dt>NRM region</dt><dd>${h(site.nrmRegion || "—")}</dd>
+        <dt>Tenure</dt><dd>${h(site.landTenure || "—")}</dd>
+        <dt>Area</dt><dd>${site.areaHectares ? h(site.areaHectares) + " ha" : "—"}</dd>
+        <dt>Centre</dt><dd>${h(site.centre?.lat)}, ${h(site.centre?.lng)}</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Assessments</h2>
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Assessor</th><th>Rating (professional)</th>
+          <th>Internal heuristic</th><th>Threats</th><th>Limitations</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="6">No assessments recorded.</td></tr>`}</tbody>
+      </table>
+      <p class="note">
+        Ratings are professional judgements entered by the user. The internal heuristic is a
+        transparent, configurable indicator for trend tracking only and is not an ecological determination.
+      </p>
+    </section>
+    <section>
+      <h2>Monitoring observations (${observations.length})</h2>
+      <ul>${observations.slice(0, 50).map((o) =>
+        `<li>${h(o.observedAt)} — ${h(o.type)} — ${h(o.observer)}</li>`).join("") || "<li>None recorded.</li>"}</ul>
+    </section>
+    <section>
+      <h2>Species records (${species.length})</h2>
+      <ul>${species.slice(0, 100).map((s) =>
+        `<li><em>${h(s.scientificName)}</em> ${s.commonName ? "(" + h(s.commonName) + ")" : ""} — ${h(s.status)}</li>`
+      ).join("") || "<li>None recorded.</li>"}</ul>
+    </section>
+  `;
+});
+```
+
+5.2 src/reports/templates/monitoring-summary.html.js
+
+```js
+import { registerTemplate } from "../engine.js";
+
+const h = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+registerTemplate("monitoring-summary", ({ site, observations }) => {
+  const byType = {};
+  for (const o of observations) byType[o.type] = (byType[o.type] || 0) + 1;
+
+  return `
+    <h1>Monitoring summary — ${h(site.name)}</h1>
+    <section>
+      <h2>Counts by type</h2>
+      <table>
+        <thead><tr><th>Type</th><th>Count</th></tr></thead>
+        <tbody>
+          ${Object.entries(byType).map(([k, v]) => `<tr><td>${h(k)}</td><td>${v}</td></tr>`).join("") || `<tr><td colspan="2">No observations.</td></tr>`}
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Observation log</h2>
+      <table>
+        <thead><tr><th>Date</th><th>Type</th><th>Observer</th><th>Location</th><th>Notes</th></tr></thead>
+        <tbody>
+          ${observations.slice(0, 200).map((o) => `
+            <tr>
+              <td>${h(o.observedAt)}</td>
+              <td>${h(o.type)}</td>
+              <td>${h(o.observer)}</td>
+              <td>${o.location ? h(o.location.lat) + ", " + h(o.location.lng) : "—"}</td>
+              <td>${h(o.notes || "")}</td>
+            </tr>`).join("") || `<tr><td colspan="5">None recorded.</td></tr>`}
+        </tbody>
+      </table>
+    </section>
+  `;
+});
+```
+
+5.3 src/reports/templates/maintenance-report.html.js
+
+```js
+import { registerTemplate } from "../engine.js";
+
+const h = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+registerTemplate("maintenance-report", ({ site, maintenance }) => {
+  const now = Date.now();
+  const overdue = maintenance.filter((m) =>
+    m.dueDate && m.status !== "completed" && m.status !== "cancelled" &&
+    new Date(m.dueDate).getTime() < now);
+
+  return `
+    <h1>Maintenance report — ${h(site.name)}</h1>
+    <section>
+      <h2>Summary</h2>
+      <ul>
+        <li>Total activities: ${maintenance.length}</li>
+        <li>Overdue: ${overdue.length}</li>
+        <li>Completed: ${maintenance.filter((m) => m.status === "completed").length}</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Activity log</h2>
+      <table>
+        <thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Priority</th><th>Due</th><th>Completed</th><th>Assignee</th></tr></thead>
+        <tbody>
+          ${maintenance.slice(0, 200).map((m) => `
+            <tr>
+              <td>${h(m.title)}</td>
+              <td>${h(m.type)}</td>
+              <td>${h(m.status)}</td>
+              <td>${h(m.priority)}</td>
+              <td>${h(m.dueDate || "")}</td>
+              <td>${h(m.completedAt || "")}</td>
+              <td>${h(m.assignee || "")}</td>
+            </tr>`).join("") || `<tr><td colspan="7">None recorded.</td></tr>`}
+        </tbody>
+      </table>
+    </section>
+  `;
+});
+```
+
+5.4 src/reports/templates/project-summary.html.js
+
+```js
+import { registerTemplate } from "../engine.js";
+
+const h = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+registerTemplate("project-summary", ({ site, assessments, observations, species, maintenance }) => {
+  return `
+    <h1>Project summary — ${h(site.name)}</h1>
+    <section>
+      <h2>Site</h2>
+      <dl>
+        <dt>Status</dt><dd>${h(site.status)}</dd>
+        <dt>NRM region</dt><dd>${h(site.nrmRegion || "—")}</dd>
+        <dt>Tenure</dt><dd>${h(site.landTenure || "—")}</dd>
+        <dt>Area</dt><dd>${site.areaHectares ? h(site.areaHectares) + " ha" : "—"}</dd>
+        <dt>Description</dt><dd>${h(site.description || "—")}</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Record counts</h2>
+      <ul>
+        <li>Assessments: ${assessments.length}</li>
+        <li>Observations: ${observations.length}</li>
+        <li>Species records: ${species.length}</li>
+        <li>Maintenance activities: ${maintenance.length}</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Latest assessment</h2>
+      ${assessments.length === 0
+        ? `<p>None recorded.</p>`
+        : (() => {
+            const a = assessments.slice().sort((x, y) => (y.assessedAt || "").localeCompare(x.assessedAt || ""))[0];
+            return `<p>${h(a.assessedAt)} — ${h(a.assessor)} — rating: <strong>${h(a.rating)}</strong></p>`;
+          })()}
+    </section>
+  `;
+});
+```
+
+---
+
+6. Additional Domain and Reference Files
+
+6.1 src/domain/zones.js
+
+Even if the Zones view is deferred, the module should exist so nothing references a missing file.
+
+```js
+import { createRepository } from "../storage/repository.js";
+import { S } from "../core/schema.js";
+
+export const zoneSchema = S.object({
+  siteId: S.string({ min: 4, max: 40 }),
+  name: S.string({ min: 1, max: 200 }),
+  purpose: S.string({ required: false, max: 300 }),
+  boundary: S.array({ required: false, max: 5000 }),
+  notes: S.string({ required: false, max: 2000 }),
+});
+
+export const zones = createRepository({ name: "zones", schema: zoneSchema });
+```
+
+6.2 src/reference/tas-vegetation.json
+
+```json
+{
+  "metadata": {
+    "title": "Tasmanian vegetation communities (advisory subset)",
+    "source": "Compiled from publicly available Tasmanian vegetation descriptions. Advisory only.",
+    "sourceDate": "2023-01-01",
+    "caveat": "Not an official register. Verify against current Tasmanian vegetation classification before professional reliance."
+  },
+  "items": [
+    { "code": "TAS-EF-01", "name": "Tasmanian dry eucalypt forest", "note": "Widespread in eastern Tasmania." },
+    { "code": "TAS-EF-02", "name": "Wet eucalypt forest", "note": "Higher rainfall areas." },
+    { "code": "TAS-RF-01", "name": "Cool temperate rainforest", "note": "Nothofagus / Atherosperma dominated." },
+    { "code": "TAS-AL-01", "name": "Alpine and subalpine vegetation", "note": "High elevation, above treeline." },
+    { "code": "TAS-WL-01", "name": "Freshwater wetland", "note": "Riparian and lacustrine." },
+    { "code": "TAS-WL-02", "name": "Saltmarsh", "note": "Coastal, tidal influence." },
+    { "code": "TAS-HE-01", "name": "Heathland", "note": "Sandy or peaty substrates." },
+    { "code": "TAS-GR-01", "name": "Native grassland", "note": "Lowland, often derived." }
+  ]
+}
+```
+
+6.3 src/reference/tas-threatened.json
+
+```json
+{
+  "metadata": {
+    "title": "Selected Tasmanian threatened species (advisory subset)",
+    "source": "Compiled from publicly available Tasmanian and Commonwealth threatened species listings. Advisory only.",
+    "sourceDate": "2023-01-01",
+    "caveat": "Not an official register. Verify against current listings before professional reliance."
+  },
+  "items": [
+    { "scientificName": "Sarcophilus harrisii", "commonName": "Tasmanian Devil", "status": "endangered" },
+    { "scientificName": "Dasyurus maculatus", "commonName": "Spotted-tailed Quoll", "status": "vulnerable" },
+    { "scientificName": "Perameles gunnii", "commonName": "Eastern Barred Bandicoot (Tasmanian)", "status": "vulnerable" },
+    { "scientificName": "Aquila audax fleayi", "commonName": "Tasmanian Wedge-tailed Eagle", "status": "endangered" },
+    { "scientificName": "Neophema chrysogaster", "commonName": "Orange-bellied Parrot", "status": "endangered" },
+    { "scientificName": "Lathamus discolor", "commonName": "Swift Parrot", "status": "endangered" },
+    { "scientificName": "Astacopsis gouldi", "commonName": "Giant Freshwater Crayfish", "status": "vulnerable" },
+    { "scientificName": "Eucalyptus morrisbyi", "commonName": "Morrisby's Gum", "status": "endangered" }
+  ]
+}
+```
+
+---
+
+7. Small UI Helpers Referenced but Missing
+
+7.1 src/ui/modal.js
+
+```js
+export function openModal({ title, bodyHtml, onClose }) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+      <header class="modal-header">
+        <h2>${escapeHtml(title)}</h2>
+        <button class="btn modal-close" aria-label="Close">✕</button>
+      </header>
+      <div class="modal-body">${bodyHtml}</div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  function close() {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey);
+    if (onClose) onClose();
+  }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+  backdrop.querySelector(".modal-close").addEventListener("click", close);
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+
+  return { close, root: backdrop };
+}
+
+function escapeHtml(s) { return String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+```
+
+7.2 src/ui/table.js
+
+```js
+export function renderTable(columns, rows) {
+  return `
+    <table class="eco-table">
+      <thead><tr>${columns.map((c) => `<th>${escape(c.label)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${rows.length === 0
+          ? `<tr><td colspan="${columns.length}">No records.</td></tr>`
+          : rows.map((r) => `
+              <tr>${columns.map((c) => `<td>${escape(c.get(r))}</td>`).join("")}</tr>
+            `).join("")}
+      </tbody>
+    </table>`;
+}
+
+function escape(s) { return String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+```
+
+---
+
+8. Small CSS Additions for the New Components
+
+Append to src/styles/components.css:
+
+```css
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 720px) {
+  .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: 1fr; }
+}
+.stat { text-align: center; padding: 12px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: #fbfcfb; }
+.stat-num { font-size: 28px; font-weight: 600; color: var(--accent-dark); }
+.stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.list { list-style: none; padding: 0; margin: 4px 0 12px 0; }
+.list li { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.pill { display: inline-block; background: #eef1ec; border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--muted); }
+.pill-warn { background: #fdf4e0; border-color: #e8d4a0; color: var(--warn); }
+.reference-suggest { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 12px 0; }
+.reference-suggest label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.reference-suggest select { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); max-width: 560px; width: 92%; max-height: 86vh; overflow: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.modal-header h2 { margin: 0; font-size: 15px; }
+.modal-body { padding: 12px; }
+```
+
+---
+
+9. Fixing the Two Known Bugs While I'm Here
+
+These were flagged in the previous message. Since we're editing anyway, apply them now.
+
+9.1 Optional coordinate on species and observation
+
+In src/core/schema.js, change latLng to accept a required option:
+
+```js
+latLng({ required = true } = {}) {
+  return (value) => {
+    if (value === undefined || value === null) {
+      if (required) throw new ValidationError("field", "Coordinate required");
+      return null;
+    }
+    if (typeof value !== "object") throw new ValidationError("field", "Coordinate required");
+    const { lat, lng } = value;
+    if (typeof lat !== "number" || lat < -90 || lat > 90) throw new ValidationError("field", "Invalid latitude");
+    if (typeof lng !== "number" || lng < -180 || lng > 180) throw new ValidationError("field", "Invalid longitude");
+    return { lat, lng };
+  };
+},
+```
+
+Then in src/domain/species.js:
+
+```js
+location: S.latLng({ required: false }),
+```
+
+And in src/domain/monitoring.js:
+
+```js
+location: S.latLng({ required: false }),
+```
+
+9.2 Circular import in the test runner
+
+Replace tests/run.js with this version and delete tests/run-helpers.js. Every test file imports test, assert, eq from tests/_helpers.js.
+
+tests/_helpers.js
+
+```js
+export const _tests = [];
+
+export function test(name, fn) {
+  _tests.push({ name, fn });
+}
+
+export function assert(cond, msg) {
+  if (!cond) throw new Error(msg || "assertion failed");
+}
+
+export function eq(a, b, msg) {
+  if (a !== b) throw new Error(`${msg || "eq failed"}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
+}
+```
+
+tests/run.js
+
+```js
+import { _tests } from "./_helpers.js";
+
+await import("./schema.test.js");
+await import("./reference.test.js");
+
+let passed = 0, failed = 0;
+const results = [];
+
+for (const t of _tests) {
+  try {
+    await t.fn();
+    passed++;
+    results.push({ name: t.name, status: "pass" });
+  } catch (err) {
+    failed++;
+    results.push({ name: t.name, status: "fail", error: err.message });
+  }
+}
+
+console.log("\n--- EcoTas tests ---");
+for (const r of results) {
+  console.log(`${r.status === "pass" ? "PASS" : "FAIL"}  ${r.name}${r.error ? " — " + r.error : ""}`);
+}
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);
+```
+
+Then update the first line of tests/schema.test.js and tests/reference.test.js:
+
+```js
+import { test, assert, eq } from "./_helpers.js";
+```
+
+---
+
+10. What to Do Now — Step by Step
+
+1. Create the missing files in your ecotas/ tree:
+   · src/ui/views/dashboard.js, sites.js, species.js, monitoring.js, maintenance.js, compliance.js
+   · src/reports/templates/site-assessment.html.js, monitoring-summary.html.js, maintenance-report.html.js, project-summary.html.js
+   · src/domain/zones.js
+   · src/reference/tas-vegetation.json, tas-threatened.json
+   · src/ui/modal.js, src/ui/table.js
+2. Replace src/app.js, src/ui/router.js, src/index.html with the versions in sections 1–3.
+3. Append the CSS in section 8 to src/styles/components.css.
+4. Apply the two bug fixes in section 9.
+5. Reload src/index.html in your browser.
+6. Open the browser console (F12 → Console). You should see:
+   ```
+   [<time>] [info] EcoTas v0.2.1 booting
+   [<time>] [info] EcoTas ready
+   ```
+   The Dashboard view should render with four stat cards (all zero) and empty lists.
+7. Test the flow:
+   · Go to Projects → add a project.
+   · Go to Sites → add a site linked to the project.
+   · Go to Species → pick from the Tasmanian weed dropdown, save.
+   · Go to Monitoring → add an observation with a location.
+   · Go to Maintenance → add an activity with a past due date; it should show an "overdue" pill.
+   · Go to Compliance → add a checklist item.
+   · Go to Reports → pick the site, pick "Site assessment", click Generate. A new window opens with the printable report and a provenance footer.
+   · Go to Settings → download a backup. You should get a JSON file.
+8. Run tests: node tests/run.js. Expected output ends with 6 passed, 0 failed (or thereabouts).
+
+---
+
+11. Direct Answer to Your Two Questions
+
+"What still needs to be added for it to function?"
+The view files, report template files, a couple of domain/reference files, and the two UI helpers I listed in section 4–7. Everything you need is in this message. The reason it was blank was that app.js was importing files that did not exist yet, and one failed import takes down the whole module graph.
+
+"Does it need the report templates?"
+Yes — but not only the report templates. All view files were also missing. The fix in section 1 changes app.js so a missing template no longer blanks the app; instead you get a diagnostic panel with the actual error. That diagnostic is the difference between "blank page" and "here is what's wrong".
+
+---
+
+12. Honest Status
+
+· After applying this message, the app will render, navigate, persist records in IndexedDB, and generate reports.
+· Still not present: photo/media attachments, GPX/KML parsing, CRS selection beyond WGS84, PDF generation without window.print(), multi-user sync, real authentication.
+· Still not tested: I have not run this build in a browser in this session. The schema and reference tests are written; the repository and UI tests are not. If something fails, open the console and paste me the error — I'll fix it directly.
+
+Once you confirm the shell renders and the CRUD flow works end-to-end, I will proceed to Stage 3 (attachments via IndexedDB blobs, real GPX/KML/GeoJSON parsing, PDF generation without window.print(), species autocomplete from the reference lists) as your next delivery.
