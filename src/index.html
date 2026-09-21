@@ -21,20 +21,52 @@
     <div class="app-body">
       <nav class="app-nav" aria-label="Main">
         <ul>
-          <li><a href="#/dashboard" data-route="dashboard">Dashboard</a></li>
-          <li><a href="#/projects"  data-route="projects">Projects</a></li>
-          <li><a href="#/sites"     data-route="sites">Sites</a></li>
-          <li><a href="#/species"   data-route="species">Species</a></li>
-          <li><a href="#/monitoring"data-route="monitoring">Monitoring</a></li>
-          <li><a href="#/maintenance"data-route="maintenance">Maintenance</a></li>
-          <li><a href="#/compliance" data-route="compliance">Compliance</a></li>
-          <li><a href="#/reports"   data-route="reports">Reports</a></li>
+          <li><a href="#/dashboard"   data-route="dashboard">Dashboard</a></li>
+          <li><a href="#/projects"    data-route="projects">Projects</a></li>
+          <li><a href="#/sites"       data-route="sites">Sites</a></li>
+          <li><a href="#/species"     data-route="species">Species</a></li>
+          <li><a href="#/monitoring"  data-route="monitoring">Monitoring</a></li>
+          <li><a href="#/maintenance" data-route="maintenance">Maintenance</a></li>
+          <li><a href="#/compliance"  data-route="compliance">Compliance</a></li>
+          <li><a href="#/reports"     data-route="reports">Reports</a></li>
         </ul>
       </nav>
-      <main class="app-main" id="main" tabindex="-1"></main>
+      <main class="app-main" id="main" tabindex="-1">
+        <noscript><p>EcoTas requires JavaScript.</p></noscript>
+        <p class="help">Loading EcoTas…</p>
+      </main>
     </div>
   </div>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <!-- Fallback: if the module graph fails to load, show a diagnostic. -->
+  <script>
+    window.addEventListener("error", function (e) {
+      var main = document.getElementById("main");
+      if (!main) return;
+      if (main.querySelector(".error-panel")) return;
+      main.innerHTML =
+        '<div class="error-panel">' +
+        '<h2>A script error occurred</h2>' +
+        '<p>' + String(e.message || e.error || "Unknown error").replace(/[<>&]/g, "") + '</p>' +
+        '<p class="help">Check the browser console and the Network tab for missing files.</p>' +
+        '</div>';
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      var main = document.getElementById("main");
+      if (!main) return;
+      if (main.querySelector(".error-panel")) return;
+      var reason = e.reason && (e.reason.message || e.reason) || "Unknown promise rejection";
+      main.innerHTML =
+        '<div class="error-panel">' +
+        '<h2>Startup failed</h2>' +
+        '<p>' + String(reason).replace(/[<>&]/g, "") + '</p>' +
+        '<p class="help">This is often a missing module file. Check the console.</p>' +
+        '</div>';
+    });
+  </script>
+
   <script type="module" src="./app.js"></script>
 </body>
 </html>
+

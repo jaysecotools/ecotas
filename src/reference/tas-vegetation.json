@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "title": "Tasmanian vegetation communities (advisory subset)",
+    "source": "Compiled from publicly available Tasmanian vegetation descriptions. Advisory only.",
+    "sourceDate": "2023-01-01",
+    "caveat": "Not an official register. Verify against current Tasmanian vegetation classification before professional reliance."
+  },
+  "items": [
+    { "code": "TAS-EF-01", "name": "Tasmanian dry eucalypt forest", "note": "Widespread in eastern Tasmania." },
+    { "code": "TAS-EF-02", "name": "Wet eucalypt forest", "note": "Higher rainfall areas." },
+    { "code": "TAS-RF-01", "name": "Cool temperate rainforest", "note": "Nothofagus / Atherosperma dominated." },
+    { "code": "TAS-AL-01", "name": "Alpine and subalpine vegetation", "note": "High elevation, above treeline." },
+    { "code": "TAS-WL-01", "name": "Freshwater wetland", "note": "Riparian and lacustrine." },
+    { "code": "TAS-WL-02", "name": "Saltmarsh", "note": "Coastal, tidal influence." },
+    { "code": "TAS-HE-01", "name": "Heathland", "note": "Sandy or peaty substrates." },
+    { "code": "TAS-GR-01", "name": "Native grassland", "note": "Lowland, often derived." }
+  ]
+}

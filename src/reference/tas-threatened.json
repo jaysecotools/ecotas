@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "title": "Selected Tasmanian threatened species (advisory subset)",
+    "source": "Compiled from publicly available Tasmanian and Commonwealth threatened species listings. Advisory only.",
+    "sourceDate": "2023-01-01",
+    "caveat": "Not an official register. Verify against current listings before professional reliance."
+  },
+  "items": [
+    { "scientificName": "Sarcophilus harrisii", "commonName": "Tasmanian Devil", "status": "endangered" },
+    { "scientificName": "Dasyurus maculatus", "commonName": "Spotted-tailed Quoll", "status": "vulnerable" },
+    { "scientificName": "Perameles gunnii", "commonName": "Eastern Barred Bandicoot (Tasmanian)", "status": "vulnerable" },
+    { "scientificName": "Aquila audax fleayi", "commonName": "Tasmanian Wedge-tailed Eagle", "status": "endangered" },
+    { "scientificName": "Neophema chrysogaster", "commonName": "Orange-bellied Parrot", "status": "endangered" },
+    { "scientificName": "Lathamus discolor", "commonName": "Swift Parrot", "status": "endangered" },
+    { "scientificName": "Astacopsis gouldi", "commonName": "Giant Freshwater Crayfish", "status": "vulnerable" },
+    { "scientificName": "Eucalyptus morrisbyi", "commonName": "Morrisby's Gum", "status": "endangered" }
+  ]
+}

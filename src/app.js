@@ -1,59 +1,106 @@
+// src/app.js
 import { runMigrations } from "./storage/migrations.js";
 import { open } from "./storage/db.js";
 import { logger, setLevel } from "./core/logger.js";
-import { router } from "./ui/router.js";
+import { router, registerView } from "./ui/router.js";
 import { mount as mountShell } from "./ui/shell.js";
-import { registerView } from "./ui/router.js";
 
-import * as dashboardView from "./ui/views/dashboard.js";
-import * as projectsView from "./ui/views/projects.js";
-import * as sitesView from "./ui/views/sites.js";
-import * as speciesView from "./ui/views/species.js";
-import * as monitoringView from "./ui/views/monitoring.js";
-import * as maintenanceView from "./ui/views/maintenance.js";
-import * as complianceView from "./ui/views/compliance.js";
-import * as reportsView from "./ui/views/reports.js";
-import * as settingsView from "./ui/views/settings.js";
+const APP_VERSION = "0.2.1";
 
-// Register report templates (side-effect imports)
-import "./reports/templates/site-assessment.html.js";
-import "./reports/templates/monitoring-summary.html.js";
-import "./reports/templates/maintenance-report.html.js";
-import "./reports/templates/project-summary.html.js";
+// Lazy view registry. Each entry is a function that returns a Promise
+// resolving to a view module ({ mount, unmount }).
+const VIEW_LOADERS = {
+  dashboard:   () => import("./ui/views/dashboard.js"),
+  projects:    () => import("./ui/views/projects.js"),
+  sites:       () => import("./ui/views/sites.js"),
+  species:     () => import("./ui/views/species.js"),
+  monitoring:  () => import("./ui/views/monitoring.js"),
+  maintenance: () => import("./ui/views/maintenance.js"),
+  compliance:  () => import("./ui/views/compliance.js"),
+  reports:     () => import("./ui/views/reports.js"),
+  settings:    () => import("./ui/views/settings.js"),
+};
 
-const APP_VERSION = "0.2.0";
+// Report templates are also lazy-loaded on first report render, so a
+// broken template cannot blank the entire application.
+async function ensureReportTemplates() {
+  // The import of each template file registers it with the report engine
+  // as a side effect. We import them all once; failures are logged but
+  // do not propagate.
+  const files = [
+    "./reports/templates/site-assessment.html.js",
+    "./reports/templates/monitoring-summary.html.js",
+    "./reports/templates/maintenance-report.html.js",
+    "./reports/templates/project-summary.html.js",
+  ];
+  for (const f of files) {
+    try {
+      await import(/* @vite-ignore */ f);
+    } catch (err) {
+      logger.warn(`Report template failed to load: ${f}`, err);
+    }
+  }
+}
 
 async function boot() {
   setLevel("info");
   logger.info(`EcoTas v${APP_VERSION} booting`);
 
-  await open();
-  await runMigrations();
+  // Wrap each major step so a single failure shows a useful message
+  // instead of a blank page.
+  try {
+    await open();
+  } catch (err) {
+    return fatal("Storage could not be opened", err);
+  }
 
-  mountShell({ appVersion: APP_VERSION });
+  try {
+    await runMigrations();
+  } catch (err) {
+    return fatal("Migrations failed", err);
+  }
 
-  registerView("dashboard",  dashboardView);
-  registerView("projects",   projectsView);
-  registerView("sites",      sitesView);
-  registerView("species",    speciesView);
-  registerView("monitoring", monitoringView);
-  registerView("maintenance",maintenanceView);
-  registerView("compliance", complianceView);
-  registerView("reports",    reportsView);
-  registerView("settings",   settingsView);
+  try {
+    mountShell({ appVersion: APP_VERSION });
+  } catch (err) {
+    return fatal("Shell could not be mounted", err);
+  }
 
-  await router.start();
+  // Register lazy view loaders.
+  for (const [route, loader] of Object.entries(VIEW_LOADERS)) {
+    registerView(route, loader);
+  }
 
+  // Kick off template loading without blocking boot.
+  ensureReportTemplates().catch((e) => logger.warn("Template preload error", e));
+
+  try {
+    await router.start();
+  } catch (err) {
+    return fatal("Router failed to start", err);
+  }
+
+  document.getElementById("app").setAttribute("aria-busy", "false");
+  logger.info("EcoTas ready");
+}
+
+function fatal(message, err) {
+  logger.error(message, err);
+  const main = document.getElementById("main");
+  if (main) {
+    main.innerHTML = `
+      <div class="error-panel">
+        <h2>${escape(message)}</h2>
+        <p>${escape(err && err.message ? err.message : String(err))}</p>
+        <p class="help">Open the browser console for full details.</p>
+      </div>`;
+  }
   document.getElementById("app").setAttribute("aria-busy", "false");
 }
 
-boot().catch((err) => {
-  logger.error("Boot failed", err);
-  const main = document.getElementById("main");
-  if (main) {
-    main.innerHTML = `<div class="error-panel">
-      <h2>EcoTas could not start</h2>
-      <p>${String(err && err.message || err)}</p>
-    </div>`;
-  }
-});
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+boot().catch((err) => fatal("EcoTas could not start", err));

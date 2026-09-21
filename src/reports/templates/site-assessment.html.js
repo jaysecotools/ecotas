@@ -1,0 +1,58 @@
+import { registerTemplate } from "../engine.js";
+import { heuristicIndex } from "../../domain/assessments.js";
+
+const h = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+registerTemplate("site-assessment", ({ site, assessments, observations, species }) => {
+  const rows = assessments.map((a) => {
+    const idx = heuristicIndex(a);
+    return `
+      <tr>
+        <td>${h(a.assessedAt)}</td>
+        <td>${h(a.assessor)}</td>
+        <td>${h(a.rating)}</td>
+        <td>${idx ? idx.value + " (heuristic)" : "—"}</td>
+        <td>${h((a.threats || []).join(", "))}</td>
+        <td>${h(a.limitations || "")}</td>
+      </tr>`;
+  }).join("");
+
+  return `
+    <h1>Site assessment report — ${h(site.name)}</h1>
+    <section>
+      <h2>Site</h2>
+      <dl>
+        <dt>NRM region</dt><dd>${h(site.nrmRegion || "—")}</dd>
+        <dt>Tenure</dt><dd>${h(site.landTenure || "—")}</dd>
+        <dt>Area</dt><dd>${site.areaHectares ? h(site.areaHectares) + " ha" : "—"}</dd>
+        <dt>Centre</dt><dd>${h(site.centre?.lat)}, ${h(site.centre?.lng)}</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Assessments</h2>
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Assessor</th><th>Rating (professional)</th>
+          <th>Internal heuristic</th><th>Threats</th><th>Limitations</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="6">No assessments recorded.</td></tr>`}</tbody>
+      </table>
+      <p class="note">
+        Ratings are professional judgements entered by the user. The internal heuristic is a
+        transparent, configurable indicator for trend tracking only and is not an ecological determination.
+      </p>
+    </section>
+    <section>
+      <h2>Monitoring observations (${observations.length})</h2>
+      <ul>${observations.slice(0, 50).map((o) =>
+        `<li>${h(o.observedAt)} — ${h(o.type)} — ${h(o.observer)}</li>`).join("") || "<li>None recorded.</li>"}</ul>
+    </section>
+    <section>
+      <h2>Species records (${species.length})</h2>
+      <ul>${species.slice(0, 100).map((s) =>
+        `<li><em>${h(s.scientificName)}</em> ${s.commonName ? "(" + h(s.commonName) + ")" : ""} — ${h(s.status)}</li>`
+      ).join("") || "<li>None recorded.</li>"}</ul>
+    </section>
+  `;
+});
